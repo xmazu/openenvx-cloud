@@ -1,5 +1,5 @@
 {
-  "extends": "@events/typescript-config/nextjs.json",
+  "extends": "@openenvx/typescript-config/nextjs.json",
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {

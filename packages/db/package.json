@@ -9,6 +9,11 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio"
   },
+  "exports": {
+    "./schema": "./src/schema/index.ts",
+    "./queries": "./src/queries/index.ts",
+    "./client": "./src/client.ts"
+  },
   "dependencies": {
     "drizzle-orm": "^0.45.2",
     "postgres": "^3.4.8",

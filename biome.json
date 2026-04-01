@@ -1,14 +1,6 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.2.0/schema.json",
-  "vcs": {
-    "enabled": true,
-    "clientKind": "git",
-    "useIgnoreFile": true
-  },
-  "files": {
-    "ignoreUnknown": true,
-    "includes": ["**", "!node_modules", "!.next", "!dist", "!build"]
-  },
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "extends": ["ultracite/biome/core", "ultracite/biome/next"],
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
@@ -25,6 +17,12 @@
     "domains": {
       "next": "recommended",
       "react": "recommended"
+    }
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "jsxQuoteStyle": "double"
     }
   },
   "assist": {

@@ -1,8 +1,14 @@
 {
   "extends": "@openenvx/typescript-config/base.json",
   "compilerOptions": {
-    "outDir": "dist",
-    "rootDir": "src"
+    "baseUrl": ".",
+
+    "module": "es2022",
+    "lib": ["ESNext", "dom"],
+    "moduleResolution": "node",
+    "jsxImportSource": "react",
+    "strict": true
   },
-  "include": ["src/**/*"]
+  "include": ["."],
+  "exclude": ["node_modules", "dist"]
 }
