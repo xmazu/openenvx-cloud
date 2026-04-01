@@ -58,6 +58,54 @@ func (s *Store) FetchJobsByStatus(ctx context.Context, status models.JobStatus) 
 	return jobs, nil
 }
 
+func (s *Store) FetchJobsByStatuses(ctx context.Context, statuses []models.JobStatus) ([]*models.Job, error) {
+	query := `
+		SELECT id, project_id, status, operation, module_name, variables, plan_output_path, plan_summary, nomad_eval_id, created_at, updated_at
+		FROM jobs
+		WHERE status = ANY($1)
+		ORDER BY created_at ASC
+	`
+
+	stringStatuses := make([]string, len(statuses))
+	for i, status := range statuses {
+		stringStatuses[i] = string(status)
+	}
+
+	rows, err := s.pool.Query(ctx, query, stringStatuses)
+	if err != nil {
+		return nil, fmt.Errorf("query jobs by statuses: %w", err)
+	}
+	defer rows.Close()
+
+	var jobs []*models.Job
+	for rows.Next() {
+		job := &models.Job{}
+		err := rows.Scan(
+			&job.ID,
+			&job.ProjectID,
+			&job.Status,
+			&job.Operation,
+			&job.ModuleName,
+			&job.Variables,
+			&job.PlanOutputPath,
+			&job.PlanSummary,
+			&job.NomadEvalID,
+			&job.CreatedAt,
+			&job.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan job: %w", err)
+		}
+		jobs = append(jobs, job)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate jobs: %w", err)
+	}
+
+	return jobs, nil
+}
+
 func (s *Store) UpdateJobStatus(ctx context.Context, id string, status models.JobStatus) error {
 	query := `
 		UPDATE jobs
@@ -152,7 +200,7 @@ func (s *Store) CreateJob(ctx context.Context, projectID string, operation strin
 func (s *Store) VerifyUserAndOrg(ctx context.Context, userID, orgID string) (bool, error) {
 	query := `
 		SELECT EXISTS (
-			SELECT 1 FROM membership m
+			SELECT 1 FROM member m
 			WHERE m.user_id = $1 AND m.organization_id = $2
 		)
 	`

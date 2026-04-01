@@ -3,7 +3,7 @@ job "terraform-worker" {
   type        = "batch"
 
   parameterized {
-    meta_required = ["JOB_ID", "PROJECT_ID", "OPERATION"]
+    meta_required = ["JOB_ID", "PROJECT_ID", "OPERATION", "ORCHESTRATOR_URL"]
     meta_optional = ["MODULE_NAME"]
   }
 
@@ -29,6 +29,8 @@ job "terraform-worker" {
         MINIO_SECRET_KEY  = "minioadmin"
         MINIO_USE_SSL     = "false"
         MINIO_BUCKET_NAME = "openenvx-state"
+
+        ORCHESTRATOR_URL = "${NOMAD_META_ORCHESTRATOR_URL}"
       }
 
       resources {

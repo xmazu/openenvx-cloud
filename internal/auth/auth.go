@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/openenvx/cloud/internal/db"
+	"github.com/rs/zerolog"
 )
 
 type contextKey string
@@ -15,7 +16,7 @@ const (
 	OrgIDKey  contextKey = "org_id"
 )
 
-func Middleware(store *db.Store) func(http.Handler) http.Handler {
+func Middleware(store *db.Store, logger *zerolog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			userID, orgID, ok := r.BasicAuth()
@@ -29,6 +30,7 @@ func Middleware(store *db.Store) func(http.Handler) http.Handler {
 
 			exists, err := store.VerifyUserAndOrg(r.Context(), userID, orgID)
 			if err != nil {
+				logger.Error().Err(err).Msg("Error verifying user and org")
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				return
 			}

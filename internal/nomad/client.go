@@ -3,6 +3,7 @@ package nomad
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/hashicorp/nomad/api"
 	"github.com/openenvx/cloud/internal/models"
@@ -23,11 +24,18 @@ func NewClient() (*Client, error) {
 func (c *Client) DispatchJob(ctx context.Context, job *models.Job) (string, error) {
 	jobID := "terraform-worker"
 
+	orchestratorURL := os.Getenv("ORCHESTRATOR_URL")
+	if orchestratorURL == "" {
+		// Default for local development
+		orchestratorURL = "http://host.docker.internal:8080"
+	}
+
 	meta := map[string]string{
-		"JOB_ID":      job.ID,
-		"PROJECT_ID":  job.ProjectID,
-		"OPERATION":   job.Operation,
-		"MODULE_NAME": job.ModuleName,
+		"JOB_ID":           job.ID,
+		"PROJECT_ID":       job.ProjectID,
+		"OPERATION":        job.Operation,
+		"MODULE_NAME":      job.ModuleName,
+		"ORCHESTRATOR_URL": orchestratorURL,
 	}
 
 	dispatchResp, _, err := c.nomad.Jobs().Dispatch(jobID, meta, nil, "", nil)
@@ -36,4 +44,20 @@ func (c *Client) DispatchJob(ctx context.Context, job *models.Job) (string, erro
 	}
 
 	return dispatchResp.EvalID, nil
+}
+
+func (c *Client) GetEvaluation(ctx context.Context, evalID string) (*api.Evaluation, error) {
+	eval, _, err := c.nomad.Evaluations().Info(evalID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get evaluation info: %w", err)
+	}
+	return eval, nil
+}
+
+func (c *Client) GetAllocationsForEval(ctx context.Context, evalID string) ([]*api.AllocationListStub, error) {
+	allocs, _, err := c.nomad.Evaluations().Allocations(evalID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get allocations for evaluation: %w", err)
+	}
+	return allocs, nil
 }
