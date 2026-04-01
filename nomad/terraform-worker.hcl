@@ -3,7 +3,8 @@ job "terraform-worker" {
   type        = "batch"
 
   parameterized {
-    meta_required = ["job_id"]
+    meta_required = ["JOB_ID", "PROJECT_ID", "OPERATION"]
+    meta_optional = ["MODULE_NAME"]
   }
 
   group "worker" {
@@ -11,29 +12,28 @@ job "terraform-worker" {
       driver = "docker"
 
       config {
-        image = "terraform-worker:local"
-        command = "/usr/local/bin/terraform-worker"
-        args = [
-          "--job-id",
-          "${NOMAD_META_job_id}",
-          "--",
-          "terraform",
-          "version"
-        ]
+        image      = "terraform-worker:local"
+        command    = "/worker"
         force_pull = false
       }
 
       env {
-        NOMAD_META_JOB_ID     = "${NOMAD_META_job_id}"
-        AWS_ACCESS_KEY_ID     = "minioadmin"
-        AWS_SECRET_ACCESS_KEY = "minioadmin"
-        AWS_REGION            = "us-east-1"
-        S3_ENDPOINT           = "http://host.docker.internal:9000"
+        DATABASE_URL = "postgres://postgres:postgres@host.docker.internal:5432/openenvx?sslmode=disable"
+
+        INFISICAL_CLIENT_ID     = "dummy"
+        INFISICAL_CLIENT_SECRET = "dummy"
+        INFISICAL_SITE_URL      = "http://host.docker.internal:8082"
+
+        MINIO_ENDPOINT    = "host.docker.internal:9000"
+        MINIO_ACCESS_KEY  = "minioadmin"
+        MINIO_SECRET_KEY  = "minioadmin"
+        MINIO_USE_SSL     = "false"
+        MINIO_BUCKET_NAME = "openenvx-state"
       }
 
       resources {
-        cpu    = 256
-        memory = 512
+        cpu    = 512
+        memory = 1024
       }
     }
   }

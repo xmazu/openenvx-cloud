@@ -1,0 +1,23 @@
+{
+  "name": "@openenvx/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.2",
+    "postgres": "^3.4.8",
+    "better-auth": "^1.2.0"
+  },
+  "devDependencies": {
+    "@openenvx/typescript-config": "workspace:*",
+    "drizzle-kit": "^0.31.10",
+    "@types/node": "^22.5.0",
+    "typescript": "^5.6.2"
+  }
+}
