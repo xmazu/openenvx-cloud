@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -46,6 +47,11 @@ func NewDaemon(store *db.Store, infisical *infisical.Client, storage *storage.St
 
 func (d *Daemon) Start(ctx context.Context) error {
 	d.logger.Info().Msgf("Starting orchestrator daemon, polling every %v", d.pollInterval)
+
+	if err := os.MkdirAll("/tmp/openenvx-tf-cache", 0755); err != nil {
+		return fmt.Errorf("create terraform plugin cache dir: %w", err)
+	}
+	d.logger.Info().Msg("Terraform plugin cache directory initialized at /tmp/openenvx-tf-cache")
 
 	d.workerPool.Start(ctx)
 

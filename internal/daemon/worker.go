@@ -154,6 +154,11 @@ func (p *WorkerPool) executeJob(ctx context.Context, job *models.Job, logBuffer 
 	defer os.RemoveAll(workDir)
 
 	// 4. Initialize Terraform runner
+	if secrets == nil {
+		secrets = make(map[string]string)
+	}
+	secrets["TF_PLUGIN_CACHE_DIR"] = "/tmp/openenvx-tf-cache"
+
 	runner, err := terraform.NewRunner(workDir, secrets)
 	if err != nil {
 		return fmt.Errorf("init terraform runner: %w", err)

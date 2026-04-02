@@ -8,9 +8,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 
 	"github.com/hashicorp/terraform-exec/tfexec"
 )
+
+var initMutex sync.Mutex
 
 type BackendConfig struct {
 	URL      string
@@ -77,6 +80,9 @@ terraform {
 }
 
 func (r *Runner) Init(ctx context.Context) ([]byte, []byte, error) {
+	initMutex.Lock()
+	defer initMutex.Unlock()
+
 	var stdout, stderr bytes.Buffer
 	if r.stdout != nil {
 		r.tf.SetStdout(io.MultiWriter(&stdout, r.stdout))
