@@ -98,7 +98,7 @@ func (r *Runner) Init(ctx context.Context) ([]byte, []byte, error) {
 	return stdout.Bytes(), stderr.Bytes(), nil
 }
 
-func (r *Runner) Plan(ctx context.Context, outPath string) ([]byte, []byte, error) {
+func (r *Runner) Plan(ctx context.Context, outPath string, opts ...tfexec.PlanOption) ([]byte, []byte, error) {
 	var stdout, stderr bytes.Buffer
 	if r.stdout != nil {
 		r.tf.SetStdout(io.MultiWriter(&stdout, r.stdout))
@@ -112,7 +112,8 @@ func (r *Runner) Plan(ctx context.Context, outPath string) ([]byte, []byte, erro
 		r.tf.SetStderr(&stderr)
 	}
 
-	_, err := r.tf.Plan(ctx, tfexec.Out(outPath))
+	allOpts := append([]tfexec.PlanOption{tfexec.Out(outPath)}, opts...)
+	_, err := r.tf.Plan(ctx, allOpts...)
 	if err != nil {
 		return stdout.Bytes(), stderr.Bytes(), fmt.Errorf("terraform plan failed: %w\nstderr: %s", err, stderr.String())
 	}

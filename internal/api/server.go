@@ -161,6 +161,11 @@ type createJobRequest struct {
 	Operation  string                 `json:"operation"`
 	ModuleName string                 `json:"module_name"`
 	Variables  map[string]interface{} `json:"variables"`
+	PrePlan    []string               `json:"pre_plan"`
+	PostPlan   []string               `json:"post_plan"`
+	PreApply   []string               `json:"pre_apply"`
+	PostApply  []string               `json:"post_apply"`
+	PreDestroy []string               `json:"pre_destroy"`
 }
 
 func (s *Server) handleCreateJob(c echo.Context) error {
@@ -173,7 +178,7 @@ func (s *Server) handleCreateJob(c echo.Context) error {
 		return c.String(http.StatusBadRequest, "Missing required fields")
 	}
 
-	job, err := s.store.CreateJob(c.Request().Context(), req.ProjectID, req.Operation, req.ModuleName, req.Variables)
+	job, err := s.store.CreateJob(c.Request().Context(), req.ProjectID, req.Operation, req.ModuleName, req.Variables, req.PrePlan, req.PostPlan, req.PreApply, req.PostApply, req.PreDestroy)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			activeJob, getErr := s.store.GetActiveJobForProject(c.Request().Context(), req.ProjectID)

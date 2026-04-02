@@ -4,11 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 
+	"github.com/hashicorp/terraform-exec/tfexec"
 	"github.com/openenvx/cloud/internal/db"
 	"github.com/openenvx/cloud/internal/infisical"
 	"github.com/openenvx/cloud/internal/models"
@@ -78,6 +81,8 @@ func (p *WorkerPool) processJob(ctx context.Context, job *models.Job, logger zer
 		startStatus = models.StatusPlanning
 	} else if job.Operation == "apply" {
 		startStatus = models.StatusApplying
+	} else if job.Operation == "destroy" {
+		startStatus = models.StatusDestroying
 	}
 
 	if startStatus != "" {
@@ -188,29 +193,71 @@ func (p *WorkerPool) executeJob(ctx context.Context, job *models.Job, logBuffer 
 		return fmt.Errorf("write backend config: %w", err)
 	}
 
-	// 6. Run Init()
+	// 6. Generate main.tf and terraform.tfvars.json
+	if err := p.generateTerraformFiles(job, workDir); err != nil {
+		return fmt.Errorf("generate terraform files: %w", err)
+	}
+
+	// 7. Run Init()
 	_, initStderr, err := runner.Init(ctx)
 	if err != nil {
 		return fmt.Errorf("terraform init failed: %w\nstderr: %s", err, string(initStderr))
 	}
 
-	// 6. Handle operation
+	// 8. Handle operation
 	if job.Operation == "plan" {
-		return p.handlePlan(ctx, job, runner, workDir, logger)
+		return p.handlePlan(ctx, job, runner, workDir, multiWriter, logger)
 	} else if job.Operation == "apply" {
-		return p.handleApply(ctx, job, runner, logger)
+		return p.handleApply(ctx, job, runner, workDir, multiWriter, logger)
+	} else if job.Operation == "destroy" {
+		return p.handleDestroy(ctx, job, runner, workDir, multiWriter, logger)
 	}
 
 	return fmt.Errorf("unknown operation: %s", job.Operation)
 }
 
-func (p *WorkerPool) handlePlan(ctx context.Context, job *models.Job, runner *terraform.Runner, workDir string, logger zerolog.Logger) error {
+func (p *WorkerPool) generateTerraformFiles(job *models.Job, workDir string) error {
+	// 1. Generate main.tf
+	mainTF := fmt.Sprintf(`
+module "main" {
+  source = "%s"
+}
+`, job.ModuleName)
+
+	if err := os.WriteFile(filepath.Join(workDir, "main.tf"), []byte(mainTF), 0644); err != nil {
+		return fmt.Errorf("write main.tf: %w", err)
+	}
+
+	// 2. Generate terraform.tfvars.json
+	if len(job.Variables) > 0 {
+		varsJSON, err := json.Marshal(job.Variables)
+		if err != nil {
+			return fmt.Errorf("marshal variables: %w", err)
+		}
+
+		if err := os.WriteFile(filepath.Join(workDir, "terraform.tfvars.json"), varsJSON, 0644); err != nil {
+			return fmt.Errorf("write terraform.tfvars.json: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (p *WorkerPool) handlePlan(ctx context.Context, job *models.Job, runner *terraform.Runner, workDir string, logBuffer io.Writer, logger zerolog.Logger) error {
 	planFilename := "tfplan"
 	planPath := filepath.Join(workDir, planFilename)
+
+	if err := p.runHooks(ctx, job.ID, job.PrePlan, workDir, logBuffer, logger); err != nil {
+		return err
+	}
 
 	_, planStderr, err := runner.Plan(ctx, planPath)
 	if err != nil {
 		return fmt.Errorf("terraform plan failed: %w\nstderr: %s", err, string(planStderr))
+	}
+
+	if err := p.runHooks(ctx, job.ID, job.PostPlan, workDir, logBuffer, logger); err != nil {
+		return err
 	}
 
 	currentJob, err := p.db.GetJob(ctx, job.ID)
@@ -251,15 +298,38 @@ func (p *WorkerPool) handlePlan(ctx context.Context, job *models.Job, runner *te
 	return nil
 }
 
-func (p *WorkerPool) handleApply(ctx context.Context, job *models.Job, runner *terraform.Runner, logger zerolog.Logger) error {
-	// If it's an apply operation, we might want to fetch the plan from storage first if we were strict,
-	// but the original logic just ran apply (which might do an implicit plan or use a local one if it existed).
-	// Given the instructions to port exactly, I'll follow the old logic.
-	planPath := "" // Old logic used empty string for apply
+func (p *WorkerPool) handleApply(ctx context.Context, job *models.Job, runner *terraform.Runner, workDir string, logBuffer io.Writer, logger zerolog.Logger) error {
+	planFilename := "tfplan"
+	planPath := filepath.Join(workDir, planFilename)
+
+	objectName := fmt.Sprintf("jobs/%s/tfplan", job.ID)
+	rc, err := p.storage.Download(ctx, objectName)
+	if err != nil {
+		return fmt.Errorf("download plan from storage: %w", err)
+	}
+	defer rc.Close()
+
+	f, err := os.Create(planPath)
+	if err != nil {
+		return fmt.Errorf("create local plan file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(f, rc); err != nil {
+		return fmt.Errorf("write plan to local file: %w", err)
+	}
+
+	if err := p.runHooks(ctx, job.ID, job.PreApply, workDir, logBuffer, logger); err != nil {
+		return err
+	}
 
 	_, applyStderr, err := runner.Apply(ctx, planPath)
 	if err != nil {
 		return fmt.Errorf("terraform apply failed: %w\nstderr: %s", err, string(applyStderr))
+	}
+
+	if err := p.runHooks(ctx, job.ID, job.PostApply, workDir, logBuffer, logger); err != nil {
+		return err
 	}
 
 	currentJob, err := p.db.GetJob(ctx, job.ID)
@@ -275,5 +345,92 @@ func (p *WorkerPool) handleApply(ctx context.Context, job *models.Job, runner *t
 		return fmt.Errorf("update job status to applied: %w", err)
 	}
 
+	return nil
+}
+
+func (p *WorkerPool) handleDestroy(ctx context.Context, job *models.Job, runner *terraform.Runner, workDir string, logBuffer io.Writer, logger zerolog.Logger) error {
+	planFilename := "tfplan"
+	planPath := filepath.Join(workDir, planFilename)
+
+	if err := p.runHooks(ctx, job.ID, job.PreDestroy, workDir, logBuffer, logger); err != nil {
+		return err
+	}
+
+	_, planStderr, err := runner.Plan(ctx, planPath, tfexec.Destroy(true))
+	if err != nil {
+		return fmt.Errorf("terraform plan -destroy failed: %w\nstderr: %s", err, string(planStderr))
+	}
+
+	currentJob, err := p.db.GetJob(ctx, job.ID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch job status after destroy plan: %w", err)
+	}
+	if currentJob.Status == models.StatusCancelled {
+		logger.Warn().Msg("job was cancelled mid-flight, skipping updates")
+		return nil
+	}
+
+	showStdout, showStderr, err := runner.Show(ctx, planPath)
+	if err != nil {
+		return fmt.Errorf("terraform show failed: %w\nstderr: %s", err, string(showStderr))
+	}
+
+	planSummary := string(showStdout)
+
+	planData, err := os.ReadFile(planPath)
+	if err != nil {
+		return fmt.Errorf("read plan file: %w", err)
+	}
+
+	objectName := fmt.Sprintf("jobs/%s/tfplan", job.ID)
+	_, err = p.storage.Upload(ctx, objectName, bytes.NewReader(planData), int64(len(planData)), "application/octet-stream")
+	if err != nil {
+		return fmt.Errorf("upload destroy plan: %w", err)
+	}
+
+	if err := p.db.UpdateJobPlanResult(ctx, job.ID, objectName, planSummary); err != nil {
+		return fmt.Errorf("update job plan result in db: %w", err)
+	}
+
+	if err := p.db.UpdateJobStatus(ctx, job.ID, models.StatusPlanned); err != nil {
+		return fmt.Errorf("update job status to planned: %w", err)
+	}
+
+	return nil
+}
+
+func (p *WorkerPool) runHooks(ctx context.Context, jobID string, hooks []string, workDir string, logBuffer io.Writer, logger zerolog.Logger) error {
+	for _, hook := range hooks {
+		logger.Info().Str("hook", hook).Msg("Running hook")
+		p.broker.Publish(jobID, fmt.Sprintf(">>> Running hook: %s", hook))
+
+		cmd := exec.CommandContext(ctx, "sh", "-c", hook)
+		cmd.Dir = workDir
+
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			return fmt.Errorf("hook %s: stdout pipe: %w", hook, err)
+		}
+		cmd.Stderr = cmd.Stdout
+
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("hook %s: start: %w", hook, err)
+		}
+
+		multiWriter := io.MultiWriter(logBuffer)
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			line := scanner.Text()
+			multiWriter.Write([]byte(line + "\n"))
+			p.broker.Publish(jobID, line)
+		}
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("hook %s: scanner error: %w", hook, err)
+		}
+
+		if err := cmd.Wait(); err != nil {
+			return fmt.Errorf("hook %s: failed: %w", hook, err)
+		}
+	}
 	return nil
 }

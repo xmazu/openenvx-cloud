@@ -69,11 +69,22 @@ func setupTestDB(t *testing.T) (*db.Store, func()) {
 			variables JSONB NOT NULL DEFAULT '{}',
 			plan_output_path TEXT,
 			plan_summary TEXT,
+			pre_plan JSONB NOT NULL DEFAULT '[]',
+			post_plan JSONB NOT NULL DEFAULT '[]',
+			pre_apply JSONB NOT NULL DEFAULT '[]',
+			post_apply JSONB NOT NULL DEFAULT '[]',
+			pre_destroy JSONB NOT NULL DEFAULT '[]',
 			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 		);
 	`
 	_, err = pool.Exec(ctx, createTableSQL)
+	require.NoError(t, err)
+
+	_, err = pool.Exec(ctx, "CREATE TABLE IF NOT EXISTS projects (id VARCHAR(255) PRIMARY KEY, organization_id VARCHAR(255) NOT NULL)")
+	require.NoError(t, err)
+
+	_, err = pool.Exec(ctx, "INSERT INTO projects (id, organization_id) VALUES ($1, $2)", "proj-1", "test-org")
 	require.NoError(t, err)
 
 	// Seed test user

@@ -69,7 +69,7 @@ func TestWorker_LogPersistenceAndSummary(t *testing.T) {
 	require.NoError(t, err)
 
 	store := db.NewStore(pool)
-	job, err := store.CreateJob(ctx, "project-123", "plan", "test-module", map[string]interface{}{})
+	job, err := store.CreateJob(ctx, "project-123", "plan", "test-module", map[string]interface{}{}, nil, nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	logger := zerolog.Nop()

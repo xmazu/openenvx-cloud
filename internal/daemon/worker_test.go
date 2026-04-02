@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -72,7 +73,7 @@ func TestWorker_MidFlightCancellation_Plan(t *testing.T) {
 
 	store := db.NewStore(pool)
 
-	job, err := store.CreateJob(ctx, "project-123", "plan", "test-module", map[string]interface{}{})
+	job, err := store.CreateJob(ctx, "project-123", "plan", "test-module", map[string]interface{}{}, nil, nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	// Create temporary workdir with a Terraform file that takes a few seconds to plan
@@ -102,7 +103,7 @@ data "external" "sleep" {
 
 	go func() {
 		defer wg.Done()
-		err := wp.handlePlan(ctx, job, runner, workDir, logger)
+		err := wp.handlePlan(ctx, job, runner, workDir, io.Discard, logger)
 		assert.NoError(t, err)
 	}()
 
@@ -173,7 +174,7 @@ func TestWorker_MidFlightCancellation_Apply(t *testing.T) {
 
 	store := db.NewStore(pool)
 
-	job, err := store.CreateJob(ctx, "project-123", "apply", "test-module", map[string]interface{}{})
+	job, err := store.CreateJob(ctx, "project-123", "apply", "test-module", map[string]interface{}{}, nil, nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	// Create temporary workdir with a Terraform file that takes a few seconds to apply
@@ -203,7 +204,7 @@ resource "time_sleep" "wait" {
 
 	go func() {
 		defer wg.Done()
-		err := wp.handleApply(ctx, job, runner, logger)
+		err := wp.handleApply(ctx, job, runner, workDir, io.Discard, logger)
 		assert.NoError(t, err)
 	}()
 

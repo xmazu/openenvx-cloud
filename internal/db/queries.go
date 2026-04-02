@@ -19,7 +19,7 @@ func NewStore(pool *pgxpool.Pool) *Store {
 
 func (s *Store) FetchJobsByStatus(ctx context.Context, status models.JobStatus) ([]*models.Job, error) {
 	query := `
-		SELECT j.id, j.project_id, p.organization_id, j.status, j.operation, j.module_name, j.variables, j.plan_output_path, j.plan_summary, j.created_at, j.updated_at
+		SELECT j.id, j.project_id, p.organization_id, j.status, j.operation, j.module_name, j.variables, j.plan_output_path, j.plan_summary, j.pre_plan, j.post_plan, j.pre_apply, j.post_apply, j.pre_destroy, j.created_at, j.updated_at
 		FROM jobs j
 		JOIN projects p ON j.project_id = p.id
 		WHERE j.status = $1
@@ -44,6 +44,11 @@ func (s *Store) FetchJobsByStatus(ctx context.Context, status models.JobStatus) 
 			&job.Variables,
 			&job.PlanOutputPath,
 			&job.PlanSummary,
+			&job.PrePlan,
+			&job.PostPlan,
+			&job.PreApply,
+			&job.PostApply,
+			&job.PreDestroy,
 			&job.CreatedAt,
 			&job.UpdatedAt,
 		)
@@ -62,7 +67,7 @@ func (s *Store) FetchJobsByStatus(ctx context.Context, status models.JobStatus) 
 
 func (s *Store) FetchJobsByStatuses(ctx context.Context, statuses []models.JobStatus) ([]*models.Job, error) {
 	query := `
-		SELECT j.id, j.project_id, p.organization_id, j.status, j.operation, j.module_name, j.variables, j.plan_output_path, j.plan_summary, j.created_at, j.updated_at
+		SELECT j.id, j.project_id, p.organization_id, j.status, j.operation, j.module_name, j.variables, j.plan_output_path, j.plan_summary, j.pre_plan, j.post_plan, j.pre_apply, j.post_apply, j.pre_destroy, j.created_at, j.updated_at
 		FROM jobs j
 		JOIN projects p ON j.project_id = p.id
 		WHERE j.status = ANY($1)
@@ -93,6 +98,11 @@ func (s *Store) FetchJobsByStatuses(ctx context.Context, statuses []models.JobSt
 			&job.Variables,
 			&job.PlanOutputPath,
 			&job.PlanSummary,
+			&job.PrePlan,
+			&job.PostPlan,
+			&job.PreApply,
+			&job.PostApply,
+			&job.PreDestroy,
 			&job.CreatedAt,
 			&job.UpdatedAt,
 		)
@@ -150,7 +160,7 @@ func (s *Store) UpdateJobSummary(ctx context.Context, id string, summary string)
 
 func (s *Store) GetJob(ctx context.Context, id string) (*models.Job, error) {
 	query := `
-		SELECT j.id, j.project_id, p.organization_id, j.status, j.operation, j.module_name, j.variables, j.plan_output_path, j.plan_summary, j.created_at, j.updated_at
+		SELECT j.id, j.project_id, p.organization_id, j.status, j.operation, j.module_name, j.variables, j.plan_output_path, j.plan_summary, j.pre_plan, j.post_plan, j.pre_apply, j.post_apply, j.pre_destroy, j.created_at, j.updated_at
 		FROM jobs j
 		JOIN projects p ON j.project_id = p.id
 		WHERE j.id = $1
@@ -166,6 +176,11 @@ func (s *Store) GetJob(ctx context.Context, id string) (*models.Job, error) {
 		&job.Variables,
 		&job.PlanOutputPath,
 		&job.PlanSummary,
+		&job.PrePlan,
+		&job.PostPlan,
+		&job.PreApply,
+		&job.PostApply,
+		&job.PreDestroy,
 		&job.CreatedAt,
 		&job.UpdatedAt,
 	)
@@ -175,24 +190,24 @@ func (s *Store) GetJob(ctx context.Context, id string) (*models.Job, error) {
 	return job, nil
 }
 
-func (s *Store) CreateJob(ctx context.Context, projectID string, operation string, moduleName string, variables map[string]interface{}) (*models.Job, error) {
+func (s *Store) CreateJob(ctx context.Context, projectID string, operation string, moduleName string, variables map[string]interface{}, prePlan, postPlan, preApply, postApply, preDestroy []string) (*models.Job, error) {
 	query := `
 		WITH new_job AS (
-			INSERT INTO jobs (project_id, status, operation, module_name, variables)
-			SELECT $1, $2, $3, $4, $5
+			INSERT INTO jobs (project_id, status, operation, module_name, variables, pre_plan, post_plan, pre_apply, post_apply, pre_destroy)
+			SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
 			WHERE NOT EXISTS (
 				SELECT 1 FROM jobs 
 				WHERE project_id = $1 
 				AND status IN ('PENDING_PLAN', 'PLANNING', 'PLANNED', 'APPROVED', 'APPLYING')
 			)
-			RETURNING id, project_id, status, operation, module_name, variables, plan_output_path, plan_summary, created_at, updated_at
+			RETURNING id, project_id, status, operation, module_name, variables, plan_output_path, plan_summary, pre_plan, post_plan, pre_apply, post_apply, pre_destroy, created_at, updated_at
 		)
-		SELECT nj.id, nj.project_id, p.organization_id, nj.status, nj.operation, nj.module_name, nj.variables, nj.plan_output_path, nj.plan_summary, nj.created_at, nj.updated_at
+		SELECT nj.id, nj.project_id, p.organization_id, nj.status, nj.operation, nj.module_name, nj.variables, nj.plan_output_path, nj.plan_summary, nj.pre_plan, nj.post_plan, nj.pre_apply, nj.post_apply, nj.pre_destroy, nj.created_at, nj.updated_at
 		FROM new_job nj
 		JOIN projects p ON nj.project_id = p.id
 	`
 	job := &models.Job{}
-	err := s.pool.QueryRow(ctx, query, projectID, models.StatusPendingPlan, operation, moduleName, variables).Scan(
+	err := s.pool.QueryRow(ctx, query, projectID, models.StatusPendingPlan, operation, moduleName, variables, prePlan, postPlan, preApply, postApply, preDestroy).Scan(
 		&job.ID,
 		&job.ProjectID,
 		&job.OrganizationID,
@@ -202,6 +217,11 @@ func (s *Store) CreateJob(ctx context.Context, projectID string, operation strin
 		&job.Variables,
 		&job.PlanOutputPath,
 		&job.PlanSummary,
+		&job.PrePlan,
+		&job.PostPlan,
+		&job.PreApply,
+		&job.PostApply,
+		&job.PreDestroy,
 		&job.CreatedAt,
 		&job.UpdatedAt,
 	)
@@ -216,7 +236,7 @@ func (s *Store) CreateJob(ctx context.Context, projectID string, operation strin
 
 func (s *Store) GetActiveJobForProject(ctx context.Context, projectID string) (*models.Job, error) {
 	query := `
-		SELECT j.id, j.project_id, p.organization_id, j.status, j.operation, j.module_name, j.variables, j.plan_output_path, j.plan_summary, j.created_at, j.updated_at
+		SELECT j.id, j.project_id, p.organization_id, j.status, j.operation, j.module_name, j.variables, j.plan_output_path, j.plan_summary, j.pre_plan, j.post_plan, j.pre_apply, j.post_apply, j.pre_destroy, j.created_at, j.updated_at
 		FROM jobs j
 		JOIN projects p ON j.project_id = p.id
 		WHERE j.project_id = $1
@@ -241,6 +261,11 @@ func (s *Store) GetActiveJobForProject(ctx context.Context, projectID string) (*
 		&job.Variables,
 		&job.PlanOutputPath,
 		&job.PlanSummary,
+		&job.PrePlan,
+		&job.PostPlan,
+		&job.PreApply,
+		&job.PostApply,
+		&job.PreDestroy,
 		&job.CreatedAt,
 		&job.UpdatedAt,
 	)

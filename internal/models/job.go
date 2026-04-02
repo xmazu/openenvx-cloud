@@ -29,6 +29,11 @@ type Job struct {
 	Variables      map[string]interface{} `json:"variables" db:"variables"`
 	PlanOutputPath *string                `json:"plan_output_path" db:"plan_output_path"`
 	PlanSummary    *string                `json:"plan_summary" db:"plan_summary"`
+	PrePlan        []string               `json:"pre_plan" db:"pre_plan"`
+	PostPlan       []string               `json:"post_plan" db:"post_plan"`
+	PreApply       []string               `json:"pre_apply" db:"pre_apply"`
+	PostApply      []string               `json:"post_apply" db:"post_apply"`
+	PreDestroy     []string               `json:"pre_destroy" db:"pre_destroy"`
 	CreatedAt      time.Time              `json:"created_at" db:"created_at"`
 	UpdatedAt      time.Time              `json:"updated_at" db:"updated_at"`
 }

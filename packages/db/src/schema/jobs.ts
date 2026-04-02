@@ -32,6 +32,11 @@ export const jobs = pgTable('jobs', {
   variables: jsonb('variables'),
   planOutputPath: text('plan_output_path'),
   planSummary: text('plan_summary'),
+  prePlan: jsonb('pre_plan').$type<string[]>().notNull().default([]),
+  postPlan: jsonb('post_plan').$type<string[]>().notNull().default([]),
+  preApply: jsonb('pre_apply').$type<string[]>().notNull().default([]),
+  postApply: jsonb('post_apply').$type<string[]>().notNull().default([]),
+  preDestroy: jsonb('pre_destroy').$type<string[]>().notNull().default([]),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
