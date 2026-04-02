@@ -14,6 +14,7 @@ import (
 	"github.com/openenvx/cloud/internal/daemon"
 	"github.com/openenvx/cloud/internal/db"
 	"github.com/openenvx/cloud/internal/infisical"
+	"github.com/openenvx/cloud/internal/pubsub"
 	"github.com/openenvx/cloud/internal/storage"
 	"github.com/rs/zerolog"
 )
@@ -50,29 +51,32 @@ func main() {
 		logger.Fatal().Err(err).Msg("Unable to create infisical client")
 	}
 
-	minioUseSSL, err := strconv.ParseBool(envOrDefault("MINIO_USE_SSL", "false"))
+	s3UseSSL, err := strconv.ParseBool(envOrDefault("S3_USE_SSL", "false"))
 	if err != nil {
-		logger.Fatal().Err(err).Msg("Unable to parse MINIO_USE_SSL")
+		logger.Fatal().Err(err).Msg("Unable to parse S3_USE_SSL")
 	}
 
 	storageClient, err := storage.NewStorage(storage.Config{
-		Endpoint:        mustGetEnv("MINIO_ENDPOINT", logger),
-		AccessKeyID:     mustGetEnv("MINIO_ACCESS_KEY", logger),
-		SecretAccessKey: mustGetEnv("MINIO_SECRET_KEY", logger),
-		UseSSL:          minioUseSSL,
-		BucketName:      mustGetEnv("MINIO_BUCKET_NAME", logger),
+		Endpoint:        mustGetEnv("S3_ENDPOINT", logger),
+		AccessKeyID:     mustGetEnv("S3_ACCESS_KEY", logger),
+		SecretAccessKey: mustGetEnv("S3_SECRET_KEY", logger),
+		UseSSL:          s3UseSSL,
+		BucketName:      mustGetEnv("S3_BUCKET_NAME", logger),
 	})
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Unable to create storage client")
 	}
 
-	apiServer := api.NewServer(store, &logger)
+	broker := pubsub.NewBroker()
+
+	apiServer := api.NewServer(store, storageClient, &logger, broker)
 	httpServer := &http.Server{
 		Addr:    ":8080",
 		Handler: apiServer.Routes(),
 	}
 
-	d := daemon.NewDaemon(store, infisicalClient, storageClient, 5, 5*time.Second, &logger)
+	orchestratorURL := envOrDefault("ORCHESTRATOR_URL", "http://localhost:8080")
+	d := daemon.NewDaemon(store, infisicalClient, storageClient, orchestratorURL, broker, 5, 5*time.Second, &logger)
 
 	go func() {
 		<-sigChan

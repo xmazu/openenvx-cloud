@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/openenvx/cloud/internal/db"
 	"github.com/openenvx/cloud/internal/models"
+	"github.com/openenvx/cloud/internal/pubsub"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -98,7 +99,8 @@ func TestCreateJob_Conflict(t *testing.T) {
 	defer cleanup()
 
 	logger := zerolog.New(nil)
-	s := NewServer(store, &logger)
+	broker := pubsub.NewBroker()
+	s := NewServer(store, nil, &logger, broker)
 	handler := s.Routes()
 
 	projectID := "proj-1"
@@ -143,7 +145,8 @@ func TestDiscardJob(t *testing.T) {
 	defer cleanup()
 
 	logger := zerolog.New(nil)
-	s := NewServer(store, &logger)
+	broker := pubsub.NewBroker()
+	s := NewServer(store, nil, &logger, broker)
 	handler := s.Routes()
 
 	projectID := "proj-1"

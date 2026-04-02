@@ -1,6 +1,6 @@
 [Unit]
 Description=OpenEnvX Orchestrator Daemon
-After=network.target postgresql.service nomad.service
+After=network.target postgresql.service
 
 [Service]
 ExecStart=/usr/local/bin/orchestrator

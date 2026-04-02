@@ -12,16 +12,20 @@ import (
 	"github.com/openenvx/cloud/internal/auth"
 	"github.com/openenvx/cloud/internal/db"
 	"github.com/openenvx/cloud/internal/models"
+	"github.com/openenvx/cloud/internal/pubsub"
+	"github.com/openenvx/cloud/internal/storage"
 	"github.com/rs/zerolog"
 )
 
 type Server struct {
-	store  *db.Store
-	logger *zerolog.Logger
+	store   *db.Store
+	storage *storage.Storage
+	logger  *zerolog.Logger
+	broker  *pubsub.Broker
 }
 
-func NewServer(store *db.Store, logger *zerolog.Logger) *Server {
-	return &Server{store: store, logger: logger}
+func NewServer(store *db.Store, storage *storage.Storage, logger *zerolog.Logger, broker *pubsub.Broker) *Server {
+	return &Server{store: store, storage: storage, logger: logger, broker: broker}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -35,8 +39,14 @@ func (s *Server) Routes() http.Handler {
 
 	api.POST("/jobs", s.handleCreateJob)
 	api.GET("/jobs/:id", s.handleGetJob)
+	api.GET("/jobs/:id/logs/stream", s.handleStreamJobLogs)
 	api.POST("/jobs/:id/approve", s.handleApproveJob)
 	api.POST("/jobs/:id/discard", s.handleDiscardJob)
+
+	api.GET("/projects/:id/state", s.handleGetProjectState)
+	api.POST("/projects/:id/state", s.handlePostProjectState)
+	api.Match([]string{"LOCK"}, "/projects/:id/state", s.handleLockProjectState)
+	api.Match([]string{"UNLOCK"}, "/projects/:id/state", s.handleUnlockProjectState)
 
 	return e
 }
@@ -195,6 +205,33 @@ func (s *Server) handleGetJob(c echo.Context) error {
 	return c.JSON(http.StatusOK, job)
 }
 
+func (s *Server) handleStreamJobLogs(c echo.Context) error {
+	id := c.Param("id")
+
+	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
+	c.Response().Header().Set(echo.HeaderCacheControl, "no-cache")
+	c.Response().Header().Set(echo.HeaderConnection, "keep-alive")
+	c.Response().WriteHeader(http.StatusOK)
+
+	ch := s.broker.Subscribe(id)
+	defer s.broker.Unsubscribe(id, ch)
+
+	for {
+		select {
+		case <-c.Request().Context().Done():
+			return nil
+		case line, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			if _, err := fmt.Fprintf(c.Response(), "data: %s\n\n", line); err != nil {
+				return err
+			}
+			c.Response().Flush()
+		}
+	}
+}
+
 func (s *Server) handleApproveJob(c echo.Context) error {
 	id := c.Param("id")
 
@@ -241,5 +278,60 @@ func (s *Server) handleDiscardJob(c echo.Context) error {
 		return c.String(http.StatusInternalServerError, "Failed to discard job")
 	}
 
+	return c.NoContent(http.StatusOK)
+}
+
+func (s *Server) handleGetProjectState(c echo.Context) error {
+	projectID := c.Param("id")
+	objectName := fmt.Sprintf("projects/%s/terraform.tfstate", projectID)
+
+	_, err := s.storage.Stat(c.Request().Context(), objectName)
+	if err != nil {
+		return c.NoContent(http.StatusNotFound)
+	}
+
+	reader, err := s.storage.Download(c.Request().Context(), objectName)
+	if err != nil {
+		s.logger.Error().Err(err).Str("project_id", projectID).Msg("Error downloading state")
+		return c.String(http.StatusInternalServerError, "Failed to get state")
+	}
+	defer reader.Close()
+
+	return c.Stream(http.StatusOK, "application/json", reader)
+}
+
+func (s *Server) handlePostProjectState(c echo.Context) error {
+	projectID := c.Param("id")
+	objectName := fmt.Sprintf("projects/%s/terraform.tfstate", projectID)
+
+	_, err := s.storage.Upload(c.Request().Context(), objectName, c.Request().Body, -1, "application/json")
+	if err != nil {
+		s.logger.Error().Err(err).Str("project_id", projectID).Msg("Error uploading state")
+		return c.String(http.StatusInternalServerError, "Failed to upload state")
+	}
+
+	return c.NoContent(http.StatusOK)
+}
+
+func (s *Server) handleLockProjectState(c echo.Context) error {
+	projectID := c.Param("id")
+
+	activeJob, err := s.store.GetActiveJobForProject(c.Request().Context(), projectID)
+	if err == nil {
+		return c.JSON(http.StatusLocked, echo.Map{
+			"error":            "Project is locked",
+			"locked_by_job_id": activeJob.ID,
+		})
+	}
+
+	if err != pgx.ErrNoRows {
+		s.logger.Error().Err(err).Str("project_id", projectID).Msg("Error checking active job")
+		return c.String(http.StatusInternalServerError, "Internal Server Error")
+	}
+
+	return c.NoContent(http.StatusOK)
+}
+
+func (s *Server) handleUnlockProjectState(c echo.Context) error {
 	return c.NoContent(http.StatusOK)
 }

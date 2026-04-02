@@ -8,7 +8,6 @@ Ensure you have the following installed:
 
 - **Go 1.22+**
 - **Docker & Docker Compose**
-- **Nomad CLI** (added to your PATH)
 
 ## 2. Local Infrastructure Setup
 
@@ -21,18 +20,7 @@ make infra
 # Or manually: docker compose -f local/docker-compose.yml up -d
 ```
 
-### Step 2: Start Nomad Agent & Register Job
-
-The Orchestrator dispatches jobs to Nomad, but the `terraform-worker` template must exist first.
-
-```bash
-make nomad
-# Or manually:
-# nomad agent -dev -config=nomad/dev.hcl &
-# sleep 5 && nomad job run nomad/terraform-worker.hcl
-```
-
-### Step 3: Start the Orchestrator Daemon
+### Step 2: Start the Orchestrator Daemon
 
 ```bash
 make setup  # Ensures .env exists
@@ -71,7 +59,7 @@ curl -X POST http://localhost:8080/internal/api/v1/jobs \
   }'
 ```
 
-- **Verify**: Open [http://localhost:4646](http://localhost:4646) (Nomad UI). You should see a `terraform-worker` job running.
+- **Verify**: You should see the job being processed in the Orchestrator logs.
 
 ### C. Approve the Job (Apply)
 
@@ -82,7 +70,7 @@ curl -X POST http://localhost:8080/internal/api/v1/jobs/<JOB_ID>/approve \
   -u "${USER_ID}:${ORG_ID}"
 ```
 
-- **Verify**: A new "Apply" execution will be dispatched in Nomad.
+- **Verify**: A new "Apply" execution will be dispatched by the Orchestrator.
 
 ## 4. Useful Makefile Commands
 

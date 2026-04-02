@@ -22,6 +22,7 @@ const (
 type Job struct {
 	ID             string                 `json:"id" db:"id"`
 	ProjectID      string                 `json:"project_id" db:"project_id"`
+	OrganizationID string                 `json:"organization_id" db:"organization_id"`
 	Status         JobStatus              `json:"status" db:"status"`
 	Operation      string                 `json:"operation" db:"operation"`
 	ModuleName     string                 `json:"module_name" db:"module_name"`

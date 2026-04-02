@@ -9,20 +9,22 @@ import (
 	"github.com/openenvx/cloud/internal/db"
 	"github.com/openenvx/cloud/internal/infisical"
 	"github.com/openenvx/cloud/internal/models"
+	"github.com/openenvx/cloud/internal/pubsub"
 	"github.com/openenvx/cloud/internal/storage"
 	"github.com/rs/zerolog"
 )
 
 type Daemon struct {
-	store        *db.Store
-	workerPool   *WorkerPool
-	pollInterval time.Duration
-	logger       *zerolog.Logger
-	mu           sync.RWMutex
-	activeJobs   map[string]struct{}
+	store           *db.Store
+	workerPool      *WorkerPool
+	pollInterval    time.Duration
+	orchestratorURL string
+	logger          *zerolog.Logger
+	mu              sync.RWMutex
+	activeJobs      map[string]struct{}
 }
 
-func NewDaemon(store *db.Store, infisical *infisical.Client, storage *storage.Storage, workerPoolSize int, pollInterval time.Duration, logger *zerolog.Logger) *Daemon {
+func NewDaemon(store *db.Store, infisical *infisical.Client, storage *storage.Storage, orchestratorURL string, broker *pubsub.Broker, workerPoolSize int, pollInterval time.Duration, logger *zerolog.Logger) *Daemon {
 	if pollInterval == 0 {
 		pollInterval = 5 * time.Second
 	}
@@ -30,14 +32,15 @@ func NewDaemon(store *db.Store, infisical *infisical.Client, storage *storage.St
 		workerPoolSize = 5
 	}
 
-	workerPool := NewWorkerPool(*logger, store, infisical, storage, workerPoolSize)
+	workerPool := NewWorkerPool(*logger, store, infisical, storage, orchestratorURL, broker, workerPoolSize)
 
 	return &Daemon{
-		store:        store,
-		workerPool:   workerPool,
-		pollInterval: pollInterval,
-		logger:       logger,
-		activeJobs:   make(map[string]struct{}),
+		store:           store,
+		workerPool:      workerPool,
+		pollInterval:    pollInterval,
+		orchestratorURL: orchestratorURL,
+		logger:          logger,
+		activeJobs:      make(map[string]struct{}),
 	}
 }
 

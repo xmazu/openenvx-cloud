@@ -4,13 +4,25 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/hashicorp/terraform-exec/tfexec"
 )
 
+type BackendConfig struct {
+	URL      string
+	Username string
+	Password string
+}
+
 type Runner struct {
-	tf *tfexec.Terraform
+	tf      *tfexec.Terraform
+	workDir string
+	stdout  io.Writer
+	stderr  io.Writer
 }
 
 func NewRunner(workDir string, env map[string]string) (*Runner, error) {
@@ -32,14 +44,51 @@ func NewRunner(workDir string, env map[string]string) (*Runner, error) {
 	}
 
 	return &Runner{
-		tf: tf,
+		tf:      tf,
+		workDir: workDir,
 	}, nil
+}
+
+func (r *Runner) SetStdout(w io.Writer) {
+	r.stdout = w
+}
+
+func (r *Runner) SetStderr(w io.Writer) {
+	r.stderr = w
+}
+
+func (r *Runner) WriteBackendConfig(config BackendConfig) error {
+	backendTF := fmt.Sprintf(`
+terraform {
+  backend "http" {
+    address        = "%s"
+    update_method  = "POST"
+    lock_address   = "%s"
+    lock_method    = "LOCK"
+    unlock_address = "%s"
+    unlock_method  = "UNLOCK"
+    username       = "%s"
+    password       = "%s"
+  }
+}
+`, config.URL, config.URL, config.URL, config.Username, config.Password)
+
+	return os.WriteFile(filepath.Join(r.workDir, "backend.tf"), []byte(backendTF), 0644)
 }
 
 func (r *Runner) Init(ctx context.Context) ([]byte, []byte, error) {
 	var stdout, stderr bytes.Buffer
-	r.tf.SetStdout(&stdout)
-	r.tf.SetStderr(&stderr)
+	if r.stdout != nil {
+		r.tf.SetStdout(io.MultiWriter(&stdout, r.stdout))
+	} else {
+		r.tf.SetStdout(&stdout)
+	}
+
+	if r.stderr != nil {
+		r.tf.SetStderr(io.MultiWriter(&stderr, r.stderr))
+	} else {
+		r.tf.SetStderr(&stderr)
+	}
 
 	err := r.tf.Init(ctx)
 	if err != nil {
@@ -51,8 +100,17 @@ func (r *Runner) Init(ctx context.Context) ([]byte, []byte, error) {
 
 func (r *Runner) Plan(ctx context.Context, outPath string) ([]byte, []byte, error) {
 	var stdout, stderr bytes.Buffer
-	r.tf.SetStdout(&stdout)
-	r.tf.SetStderr(&stderr)
+	if r.stdout != nil {
+		r.tf.SetStdout(io.MultiWriter(&stdout, r.stdout))
+	} else {
+		r.tf.SetStdout(&stdout)
+	}
+
+	if r.stderr != nil {
+		r.tf.SetStderr(io.MultiWriter(&stderr, r.stderr))
+	} else {
+		r.tf.SetStderr(&stderr)
+	}
 
 	_, err := r.tf.Plan(ctx, tfexec.Out(outPath))
 	if err != nil {
@@ -64,8 +122,17 @@ func (r *Runner) Plan(ctx context.Context, outPath string) ([]byte, []byte, erro
 
 func (r *Runner) Apply(ctx context.Context, planPath string) ([]byte, []byte, error) {
 	var stdout, stderr bytes.Buffer
-	r.tf.SetStdout(&stdout)
-	r.tf.SetStderr(&stderr)
+	if r.stdout != nil {
+		r.tf.SetStdout(io.MultiWriter(&stdout, r.stdout))
+	} else {
+		r.tf.SetStdout(&stdout)
+	}
+
+	if r.stderr != nil {
+		r.tf.SetStderr(io.MultiWriter(&stderr, r.stderr))
+	} else {
+		r.tf.SetStderr(&stderr)
+	}
 
 	var opts []tfexec.ApplyOption
 	if planPath != "" {

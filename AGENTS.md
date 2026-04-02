@@ -2,19 +2,18 @@
 
 ## Project Overview
 
-OpenEnvX Cloud manages a **Nomad control plane** for workload orchestration.
+OpenEnvX Cloud manages the absolute source of truth for cluster state.
 
 ### Architecture
 
-- **Orchestrator Daemon**: A standalone `systemd` service running directly on the host VPS. It serves as the absolute source of truth for cluster state.
-- **Terraform Workers**: Executed as parameterized batch jobs _inside_ the Nomad cluster, dispatched programmatically by the Orchestrator.
-- **Job Management**: All Nomad job templates and updates must be managed via the Orchestrator—never manually via the Nomad CLI.
+- **Orchestrator Daemon**: A standalone `systemd` service running directly on the host VPS. It serves as the absolute source of truth for state management.
+- **Terraform Workers**: Executed as parameterized batch jobs, dispatched programmatically by the Orchestrator.
+- **Job Management**: All job templates and updates must be managed via the Orchestrator.
 
 ## Catalogs
 
 | Path       | Description                                                        |
 | ---------- | ------------------------------------------------------------------ |
-| `nomad/`   | Nomad HCL job definitions and Docker plugin configs for local dev. |
 | `local/`   | Local development stack (docker-compose with MinIO, PostgreSQL).   |
 | `scripts/` | Build/deployment helper scripts.                                   |
 
@@ -31,8 +30,8 @@ Before writing, modifying, or deleting any code, you must:
 
 ### Architecture Context
 
-- This repository manages a Nomad control plane.
+- This repository manages the absolute source of truth for cluster state.
 - The **Orchestrator daemon** is a standalone `systemd` service on the host VPS and the absolute source of truth for the cluster.
-- **Terraform workers** execute as parameterized batch jobs _inside_ the Nomad cluster, dispatched by the Orchestrator.
+- **Terraform workers** execute as parameterized batch jobs, dispatched by the Orchestrator.
 - Local development uses `go run cmd/orchestrator/main.go` for the control plane instead of `docker-compose`.
-- All Nomad job templates and updates must be managed programmatically via the Orchestrator, not manually via the Nomad CLI.
+- All job templates and updates must be managed programmatically via the Orchestrator.
