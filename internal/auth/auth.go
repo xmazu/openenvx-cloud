@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/labstack/echo/v4"
 	"github.com/openenvx/cloud/internal/db"
 	"github.com/rs/zerolog"
 )
@@ -16,33 +17,35 @@ const (
 	OrgIDKey  contextKey = "org_id"
 )
 
-func Middleware(store *db.Store, logger *zerolog.Logger) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			userID, orgID, ok := r.BasicAuth()
+func Middleware(store *db.Store, logger *zerolog.Logger) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			userID, orgID, ok := c.Request().BasicAuth()
 			if !ok {
-				http.Error(w, "Unauthorized: missing basic auth", http.StatusUnauthorized)
-				return
+				return c.String(http.StatusUnauthorized, "Unauthorized: missing basic auth")
 			}
 
 			userID = strings.TrimSpace(userID)
 			orgID = strings.TrimSpace(orgID)
 
-			exists, err := store.VerifyUserAndOrg(r.Context(), userID, orgID)
+			exists, err := store.VerifyUserAndOrg(c.Request().Context(), userID, orgID)
 			if err != nil {
 				logger.Error().Err(err).Msg("Error verifying user and org")
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-				return
+				return c.String(http.StatusInternalServerError, "Internal Server Error")
 			}
 
 			if !exists {
-				http.Error(w, "Unauthorized: invalid user or organization", http.StatusUnauthorized)
-				return
+				return c.String(http.StatusUnauthorized, "Unauthorized: invalid user or organization")
 			}
 
-			ctx := context.WithValue(r.Context(), UserIDKey, userID)
+			c.Set(string(UserIDKey), userID)
+			c.Set(string(OrgIDKey), orgID)
+
+			ctx := context.WithValue(c.Request().Context(), UserIDKey, userID)
 			ctx = context.WithValue(ctx, OrgIDKey, orgID)
-			next.ServeHTTP(w, r.WithContext(ctx))
-		})
+			c.SetRequest(c.Request().WithContext(ctx))
+
+			return next(c)
+		}
 	}
 }

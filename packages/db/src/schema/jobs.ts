@@ -32,7 +32,6 @@ export const jobs = pgTable('jobs', {
   variables: jsonb('variables'),
   planOutputPath: text('plan_output_path'),
   planSummary: text('plan_summary'),
-  nomadEvalId: text('nomad_eval_id'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

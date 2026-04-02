@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -12,7 +13,8 @@ import (
 	"github.com/openenvx/cloud/internal/api"
 	"github.com/openenvx/cloud/internal/daemon"
 	"github.com/openenvx/cloud/internal/db"
-	"github.com/openenvx/cloud/internal/nomad"
+	"github.com/openenvx/cloud/internal/infisical"
+	"github.com/openenvx/cloud/internal/storage"
 	"github.com/rs/zerolog"
 )
 
@@ -39,9 +41,29 @@ func main() {
 
 	store := db.NewStore(pool)
 
-	nomadClient, err := nomad.NewClient()
+	infisicalClient, err := infisical.NewClient(infisical.Config{
+		ClientID:     mustGetEnv("INFISICAL_CLIENT_ID", logger),
+		ClientSecret: mustGetEnv("INFISICAL_CLIENT_SECRET", logger),
+		SiteURL:      mustGetEnv("INFISICAL_SITE_URL", logger),
+	})
 	if err != nil {
-		logger.Fatal().Err(err).Msg("Unable to create nomad client")
+		logger.Fatal().Err(err).Msg("Unable to create infisical client")
+	}
+
+	minioUseSSL, err := strconv.ParseBool(envOrDefault("MINIO_USE_SSL", "false"))
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Unable to parse MINIO_USE_SSL")
+	}
+
+	storageClient, err := storage.NewStorage(storage.Config{
+		Endpoint:        mustGetEnv("MINIO_ENDPOINT", logger),
+		AccessKeyID:     mustGetEnv("MINIO_ACCESS_KEY", logger),
+		SecretAccessKey: mustGetEnv("MINIO_SECRET_KEY", logger),
+		UseSSL:          minioUseSSL,
+		BucketName:      mustGetEnv("MINIO_BUCKET_NAME", logger),
+	})
+	if err != nil {
+		logger.Fatal().Err(err).Msg("Unable to create storage client")
 	}
 
 	apiServer := api.NewServer(store, &logger)
@@ -50,7 +72,7 @@ func main() {
 		Handler: apiServer.Routes(),
 	}
 
-	d := daemon.NewDaemon(store, nomadClient, 5*time.Second, &logger)
+	d := daemon.NewDaemon(store, infisicalClient, storageClient, 5, 5*time.Second, &logger)
 
 	go func() {
 		<-sigChan
@@ -77,4 +99,22 @@ func main() {
 	}
 
 	logger.Info().Msg("Orchestrator stopped")
+}
+
+func mustGetEnv(key string, logger zerolog.Logger) string {
+	value := os.Getenv(key)
+	if value == "" {
+		logger.Fatal().Str("key", key).Msg("Required environment variable is missing")
+	}
+
+	return value
+}
+
+func envOrDefault(key, fallback string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+
+	return value
 }

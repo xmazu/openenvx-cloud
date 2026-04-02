@@ -2,9 +2,13 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 	"github.com/openenvx/cloud/internal/auth"
 	"github.com/openenvx/cloud/internal/db"
 	"github.com/openenvx/cloud/internal/models"
@@ -21,20 +25,20 @@ func NewServer(store *db.Store, logger *zerolog.Logger) *Server {
 }
 
 func (s *Server) Routes() http.Handler {
-	mux := http.NewServeMux()
+	e := echo.New()
 
-	apiMux := http.NewServeMux()
-	apiMux.HandleFunc("POST /jobs", s.handleCreateJob)
-	apiMux.HandleFunc("GET /jobs/", s.handleGetJob)
-	apiMux.HandleFunc("POST /jobs/", s.handleApproveJob)
+	e.Use(middleware.Logger())
+	e.Use(middleware.Recover())
 
-	mux.Handle("/internal/api/v1/", http.StripPrefix("/internal/api/v1", auth.Middleware(s.store, s.logger)(apiMux)))
+	api := e.Group("/internal/api/v1")
+	api.Use(auth.Middleware(s.store, s.logger))
 
-	// Internal API (for workers) - No complex auth
-	mux.HandleFunc("GET /api/internal/jobs/", s.handleGetJobInternal)
-	mux.HandleFunc("PUT /api/internal/jobs/", s.handlePutJobInternal)
+	api.POST("/jobs", s.handleCreateJob)
+	api.GET("/jobs/:id", s.handleGetJob)
+	api.POST("/jobs/:id/approve", s.handleApproveJob)
+	api.POST("/jobs/:id/discard", s.handleDiscardJob)
 
-	return mux
+	return e
 }
 
 type updateJobStatusRequest struct {
@@ -149,77 +153,93 @@ type createJobRequest struct {
 	Variables  map[string]interface{} `json:"variables"`
 }
 
-func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleCreateJob(c echo.Context) error {
 	var req createJobRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request payload", http.StatusBadRequest)
-		return
+	if err := c.Bind(&req); err != nil {
+		return c.String(http.StatusBadRequest, "Invalid request payload")
 	}
 
 	if req.ProjectID == "" || req.Operation == "" || req.ModuleName == "" {
-		http.Error(w, "Missing required fields", http.StatusBadRequest)
-		return
+		return c.String(http.StatusBadRequest, "Missing required fields")
 	}
 
-	job, err := s.store.CreateJob(r.Context(), req.ProjectID, req.Operation, req.ModuleName, req.Variables)
+	job, err := s.store.CreateJob(c.Request().Context(), req.ProjectID, req.Operation, req.ModuleName, req.Variables)
 	if err != nil {
+		if err == pgx.ErrNoRows {
+			activeJob, getErr := s.store.GetActiveJobForProject(c.Request().Context(), req.ProjectID)
+			if getErr != nil {
+				s.logger.Error().Err(getErr).Msg("Error getting active job for conflict response")
+				return c.String(http.StatusInternalServerError, "Failed to create job")
+			}
+			return c.JSON(http.StatusConflict, echo.Map{
+				"error":            "Project is locked",
+				"locked_by_job_id": activeJob.ID,
+			})
+		}
 		s.logger.Error().Err(err).Msg("Error creating job")
-		http.Error(w, "Failed to create job", http.StatusInternalServerError)
-		return
+		return c.String(http.StatusInternalServerError, "Failed to create job")
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(job)
+	return c.JSON(http.StatusCreated, job)
 }
 
-func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
-	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) != 3 || parts[1] != "jobs" {
-		http.Error(w, "Not found", http.StatusNotFound)
-		return
-	}
-	id := parts[2]
+func (s *Server) handleGetJob(c echo.Context) error {
+	id := c.Param("id")
 
-	job, err := s.store.GetJob(r.Context(), id)
+	job, err := s.store.GetJob(c.Request().Context(), id)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("Error getting job")
-		http.Error(w, "Job not found", http.StatusNotFound)
-		return
+		return c.String(http.StatusNotFound, "Job not found")
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(job)
+	return c.JSON(http.StatusOK, job)
 }
 
-func (s *Server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
-	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) != 4 || parts[1] != "jobs" || parts[3] != "approve" {
-		http.Error(w, "Not found", http.StatusNotFound)
-		return
-	}
-	id := parts[2]
+func (s *Server) handleApproveJob(c echo.Context) error {
+	id := c.Param("id")
 
-	job, err := s.store.GetJob(r.Context(), id)
+	job, err := s.store.GetJob(c.Request().Context(), id)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("Error getting job")
-		http.Error(w, "Job not found", http.StatusNotFound)
-		return
+		return c.String(http.StatusNotFound, "Job not found")
 	}
 
 	if job.Status != models.StatusPlanned {
-		http.Error(w, "Job is not in PLANNED status", http.StatusBadRequest)
-		return
+		return c.String(http.StatusBadRequest, "Job is not in PLANNED status")
 	}
 
-	err = s.store.UpdateJobStatus(r.Context(), id, models.StatusApproved)
+	err = s.store.UpdateJobStatus(c.Request().Context(), id, models.StatusApproved)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("Error updating job status")
-		http.Error(w, "Failed to approve job", http.StatusInternalServerError)
-		return
+		return c.String(http.StatusInternalServerError, "Failed to approve job")
 	}
 
 	job.Status = models.StatusApproved
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(job)
+	return c.JSON(http.StatusOK, job)
+}
+
+func (s *Server) handleDiscardJob(c echo.Context) error {
+	id := c.Param("id")
+
+	job, err := s.store.GetJob(c.Request().Context(), id)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return c.String(http.StatusNotFound, "Job not found")
+		}
+		s.logger.Error().Err(err).Msg("Error getting job")
+		return c.String(http.StatusNotFound, "Job not found")
+	}
+
+	switch job.Status {
+	case models.StatusApplying, models.StatusApplied, models.StatusFailed, models.StatusCancelled:
+		return c.String(http.StatusBadRequest, fmt.Sprintf("Job cannot be discarded in %s status", job.Status))
+	}
+
+	err = s.store.UpdateJobStatus(c.Request().Context(), id, models.StatusCancelled)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("Error updating job status")
+		return c.String(http.StatusInternalServerError, "Failed to discard job")
+	}
+
+	return c.NoContent(http.StatusOK)
 }

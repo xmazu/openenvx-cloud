@@ -28,7 +28,6 @@ type Job struct {
 	Variables      map[string]interface{} `json:"variables" db:"variables"`
 	PlanOutputPath *string                `json:"plan_output_path" db:"plan_output_path"`
 	PlanSummary    *string                `json:"plan_summary" db:"plan_summary"`
-	NomadEvalID    *string                `json:"nomad_eval_id" db:"nomad_eval_id"`
 	CreatedAt      time.Time              `json:"created_at" db:"created_at"`
 	UpdatedAt      time.Time              `json:"updated_at" db:"updated_at"`
 }

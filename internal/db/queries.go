@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/openenvx/cloud/internal/models"
 )
@@ -18,7 +19,7 @@ func NewStore(pool *pgxpool.Pool) *Store {
 
 func (s *Store) FetchJobsByStatus(ctx context.Context, status models.JobStatus) ([]*models.Job, error) {
 	query := `
-		SELECT id, project_id, status, operation, module_name, variables, plan_output_path, plan_summary, nomad_eval_id, created_at, updated_at
+		SELECT id, project_id, status, operation, module_name, variables, plan_output_path, plan_summary, created_at, updated_at
 		FROM jobs
 		WHERE status = $1
 		ORDER BY created_at ASC
@@ -41,7 +42,6 @@ func (s *Store) FetchJobsByStatus(ctx context.Context, status models.JobStatus) 
 			&job.Variables,
 			&job.PlanOutputPath,
 			&job.PlanSummary,
-			&job.NomadEvalID,
 			&job.CreatedAt,
 			&job.UpdatedAt,
 		)
@@ -60,7 +60,7 @@ func (s *Store) FetchJobsByStatus(ctx context.Context, status models.JobStatus) 
 
 func (s *Store) FetchJobsByStatuses(ctx context.Context, statuses []models.JobStatus) ([]*models.Job, error) {
 	query := `
-		SELECT id, project_id, status, operation, module_name, variables, plan_output_path, plan_summary, nomad_eval_id, created_at, updated_at
+		SELECT id, project_id, status, operation, module_name, variables, plan_output_path, plan_summary, created_at, updated_at
 		FROM jobs
 		WHERE status = ANY($1)
 		ORDER BY created_at ASC
@@ -89,7 +89,6 @@ func (s *Store) FetchJobsByStatuses(ctx context.Context, statuses []models.JobSt
 			&job.Variables,
 			&job.PlanOutputPath,
 			&job.PlanSummary,
-			&job.NomadEvalID,
 			&job.CreatedAt,
 			&job.UpdatedAt,
 		)
@@ -132,22 +131,9 @@ func (s *Store) UpdateJobPlanResult(ctx context.Context, id string, planOutputPa
 	return nil
 }
 
-func (s *Store) UpdateJobNomadEvalID(ctx context.Context, id string, evalID string) error {
-	query := `
-		UPDATE jobs
-		SET nomad_eval_id = $1, updated_at = NOW()
-		WHERE id = $2
-	`
-	_, err := s.pool.Exec(ctx, query, evalID, id)
-	if err != nil {
-		return fmt.Errorf("update job nomad eval id: %w", err)
-	}
-	return nil
-}
-
 func (s *Store) GetJob(ctx context.Context, id string) (*models.Job, error) {
 	query := `
-		SELECT id, project_id, status, operation, module_name, variables, plan_output_path, plan_summary, nomad_eval_id, created_at, updated_at
+		SELECT id, project_id, status, operation, module_name, variables, plan_output_path, plan_summary, created_at, updated_at
 		FROM jobs
 		WHERE id = $1
 	`
@@ -161,7 +147,6 @@ func (s *Store) GetJob(ctx context.Context, id string) (*models.Job, error) {
 		&job.Variables,
 		&job.PlanOutputPath,
 		&job.PlanSummary,
-		&job.NomadEvalID,
 		&job.CreatedAt,
 		&job.UpdatedAt,
 	)
@@ -174,8 +159,13 @@ func (s *Store) GetJob(ctx context.Context, id string) (*models.Job, error) {
 func (s *Store) CreateJob(ctx context.Context, projectID string, operation string, moduleName string, variables map[string]interface{}) (*models.Job, error) {
 	query := `
 		INSERT INTO jobs (project_id, status, operation, module_name, variables)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, project_id, status, operation, module_name, variables, plan_output_path, plan_summary, nomad_eval_id, created_at, updated_at
+		SELECT $1, $2, $3, $4, $5
+		WHERE NOT EXISTS (
+			SELECT 1 FROM jobs 
+			WHERE project_id = $1 
+			AND status IN ('PENDING_PLAN', 'PLANNING', 'PLANNED', 'APPROVED', 'APPLYING')
+		)
+		RETURNING id, project_id, status, operation, module_name, variables, plan_output_path, plan_summary, created_at, updated_at
 	`
 	job := &models.Job{}
 	err := s.pool.QueryRow(ctx, query, projectID, models.StatusPendingPlan, operation, moduleName, variables).Scan(
@@ -187,12 +177,51 @@ func (s *Store) CreateJob(ctx context.Context, projectID string, operation strin
 		&job.Variables,
 		&job.PlanOutputPath,
 		&job.PlanSummary,
-		&job.NomadEvalID,
 		&job.CreatedAt,
 		&job.UpdatedAt,
 	)
 	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, pgx.ErrNoRows
+		}
 		return nil, fmt.Errorf("create job: %w", err)
+	}
+	return job, nil
+}
+
+func (s *Store) GetActiveJobForProject(ctx context.Context, projectID string) (*models.Job, error) {
+	query := `
+		SELECT id, project_id, status, operation, module_name, variables, plan_output_path, plan_summary, created_at, updated_at
+		FROM jobs
+		WHERE project_id = $1
+		AND status IN ($2, $3, $4, $5, $6)
+		LIMIT 1
+	`
+	job := &models.Job{}
+	err := s.pool.QueryRow(ctx, query,
+		projectID,
+		models.StatusPendingPlan,
+		models.StatusPlanning,
+		models.StatusPlanned,
+		models.StatusApproved,
+		models.StatusApplying,
+	).Scan(
+		&job.ID,
+		&job.ProjectID,
+		&job.Status,
+		&job.Operation,
+		&job.ModuleName,
+		&job.Variables,
+		&job.PlanOutputPath,
+		&job.PlanSummary,
+		&job.CreatedAt,
+		&job.UpdatedAt,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, pgx.ErrNoRows
+		}
+		return nil, fmt.Errorf("get active job: %w", err)
 	}
 	return job, nil
 }
