@@ -4,49 +4,69 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sync"
 	"time"
 
-	"github.com/openenvx/cloud/internal/db"
-	"github.com/openenvx/cloud/internal/infisical"
 	"github.com/openenvx/cloud/internal/models"
-	"github.com/openenvx/cloud/internal/pubsub"
-	"github.com/openenvx/cloud/internal/storage"
 	"github.com/rs/zerolog"
 )
 
 type Daemon struct {
-	store           *db.Store
+	store           JobStore
+	infisical       SecretManager
+	storage         ObjectStorage
+	broker          MessageBroker
 	workerPool      *WorkerPool
-	pollInterval    time.Duration
+	queueTimeout    time.Duration
 	orchestratorURL string
-	logger          *zerolog.Logger
-	mu              sync.RWMutex
-	activeJobs      map[string]struct{}
+	systemToken     string
+	logger          zerolog.Logger
+	workerPoolSize  int
 }
 
-func NewDaemon(store *db.Store, infisical *infisical.Client, storage *storage.Storage, orchestratorURL string, broker *pubsub.Broker, workerPoolSize int, pollInterval time.Duration, logger *zerolog.Logger) *Daemon {
-	if pollInterval == 0 {
-		pollInterval = 5 * time.Second
-	}
-	if workerPoolSize == 0 {
-		workerPoolSize = 5
-	}
+type Option func(*Daemon)
 
-	workerPool := NewWorkerPool(*logger, store, infisical, storage, orchestratorURL, broker, workerPoolSize)
+func WithWorkerPoolSize(size int) Option {
+	return func(d *Daemon) {
+		d.workerPoolSize = size
+	}
+}
 
-	return &Daemon{
+func WithQueueTimeout(timeout time.Duration) Option {
+	return func(d *Daemon) {
+		d.queueTimeout = timeout
+	}
+}
+
+func NewDaemon(store JobStore, infisical SecretManager, storage ObjectStorage, orchestratorURL string, systemToken string, broker MessageBroker, logger zerolog.Logger, opts ...Option) *Daemon {
+	d := &Daemon{
 		store:           store,
-		workerPool:      workerPool,
-		pollInterval:    pollInterval,
+		infisical:       infisical,
+		storage:         storage,
 		orchestratorURL: orchestratorURL,
+		systemToken:     systemToken,
+		broker:          broker,
 		logger:          logger,
-		activeJobs:      make(map[string]struct{}),
+		workerPoolSize:  5,
+		queueTimeout:    1 * time.Hour,
 	}
+
+	for _, opt := range opts {
+		opt(d)
+	}
+
+	if envTimeout := os.Getenv("QUEUE_TIMEOUT"); envTimeout != "" {
+		if t, err := time.ParseDuration(envTimeout); err == nil {
+			d.queueTimeout = t
+		}
+	}
+
+	d.workerPool = NewWorkerPool(d.logger, d.store, d.infisical, d.storage, d.orchestratorURL, d.systemToken, d.broker, d.workerPoolSize)
+
+	return d
 }
 
 func (d *Daemon) Start(ctx context.Context) error {
-	d.logger.Info().Msgf("Starting orchestrator daemon, polling every %v", d.pollInterval)
+	d.logger.Info().Msg("Starting orchestrator daemon")
 
 	if err := os.MkdirAll("/tmp/openenvx-tf-cache", 0755); err != nil {
 		return fmt.Errorf("create terraform plugin cache dir: %w", err)
@@ -54,21 +74,25 @@ func (d *Daemon) Start(ctx context.Context) error {
 	d.logger.Info().Msg("Terraform plugin cache directory initialized at /tmp/openenvx-tf-cache")
 
 	d.workerPool.Start(ctx)
+	defer d.workerPool.Stop()
 
 	if err := d.recoverJobs(ctx); err != nil {
 		d.logger.Error().Err(err).Msg("Error during job recovery")
 	}
 
-	ticker := time.NewTicker(d.pollInterval)
-	defer ticker.Stop()
+	cleanupTicker := time.NewTicker(1 * time.Minute)
+	defer cleanupTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-ticker.C:
-			if err := d.processJobs(ctx); err != nil {
-				d.logger.Error().Err(err).Msg("Error processing jobs")
+		case <-cleanupTicker.C:
+			affected, err := d.store.FailTimedOutJobs(ctx, d.queueTimeout)
+			if err != nil {
+				d.logger.Error().Err(err).Msg("Error failing timed out jobs")
+			} else if affected > 0 {
+				d.logger.Info().Int64("count", affected).Msg("Failed timed out queued jobs")
 			}
 		}
 	}
@@ -103,61 +127,4 @@ func (d *Daemon) recoverJobs(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-func (d *Daemon) processJobs(ctx context.Context) error {
-	pendingStatuses := []models.JobStatus{
-		models.StatusPendingPlan,
-		models.StatusApproved,
-	}
-
-	jobs, err := d.store.FetchJobsByStatuses(ctx, pendingStatuses)
-	if err != nil {
-		return fmt.Errorf("fetch pending jobs: %w", err)
-	}
-
-	for _, job := range jobs {
-		if !d.isJobActive(job.ID) {
-			d.logger.Info().Str("id", job.ID).Str("status", string(job.Status)).Msg("Submitting job to worker pool")
-			d.markJobActive(job.ID)
-
-			go func(j *models.Job) {
-				d.workerPool.Submit(j)
-			}(job)
-		}
-	}
-
-	d.cleanupActiveJobs(ctx)
-
-	return nil
-}
-
-func (d *Daemon) isJobActive(id string) bool {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	_, ok := d.activeJobs[id]
-	return ok
-}
-
-func (d *Daemon) markJobActive(id string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.activeJobs[id] = struct{}{}
-}
-
-func (d *Daemon) cleanupActiveJobs(ctx context.Context) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	for id := range d.activeJobs {
-		job, err := d.store.GetJob(ctx, id)
-		if err != nil {
-			d.logger.Error().Err(err).Str("id", id).Msg("Failed to check job status for cleanup")
-			continue
-		}
-
-		if job.Status != models.StatusPendingPlan && job.Status != models.StatusApproved {
-			delete(d.activeJobs, id)
-		}
-	}
 }

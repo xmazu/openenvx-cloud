@@ -11,6 +11,7 @@ const (
 	StatusPlanning    JobStatus = "PLANNING"
 	StatusPlanned     JobStatus = "PLANNED"
 	StatusApproved    JobStatus = "APPROVED"
+	StatusQueued      JobStatus = "QUEUED"
 	StatusApplying    JobStatus = "APPLYING"
 	StatusApplied     JobStatus = "APPLIED"
 	StatusDestroying  JobStatus = "DESTROYING"

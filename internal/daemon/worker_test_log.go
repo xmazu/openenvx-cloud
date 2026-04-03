@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/openenvx/cloud/internal/db"
+	"github.com/openenvx/cloud/internal/models"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -69,7 +70,7 @@ func TestWorker_LogPersistenceAndSummary(t *testing.T) {
 	require.NoError(t, err)
 
 	store := db.NewStore(pool)
-	job, err := store.CreateJob(ctx, "project-123", "plan", "test-module", map[string]interface{}{}, nil, nil, nil, nil, nil)
+	job, err := store.CreateJob(ctx, "project-123", models.StatusPendingPlan, "plan", "test-module", map[string]interface{}{}, nil, nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	logger := zerolog.Nop()

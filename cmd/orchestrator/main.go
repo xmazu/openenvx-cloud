@@ -69,14 +69,17 @@ func main() {
 
 	broker := pubsub.NewBroker()
 
-	apiServer := api.NewServer(store, storageClient, &logger, broker)
+	systemToken := mustGetEnv("ORCHESTRATOR_TOKEN", logger)
+
+	apiServer := api.NewServer(store, storageClient, logger, broker, systemToken)
+	apiHandler := apiServer.Routes()
 	httpServer := &http.Server{
 		Addr:    ":8080",
-		Handler: apiServer.Routes(),
+		Handler: apiHandler,
 	}
 
 	orchestratorURL := envOrDefault("ORCHESTRATOR_URL", "http://localhost:8080")
-	d := daemon.NewDaemon(store, infisicalClient, storageClient, orchestratorURL, broker, 5, 5*time.Second, &logger)
+	d := daemon.NewDaemon(store, infisicalClient, storageClient, orchestratorURL, systemToken, broker, logger)
 
 	go func() {
 		<-sigChan

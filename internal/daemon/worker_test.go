@@ -73,7 +73,7 @@ func TestWorker_MidFlightCancellation_Plan(t *testing.T) {
 
 	store := db.NewStore(pool)
 
-	job, err := store.CreateJob(ctx, "project-123", "plan", "test-module", map[string]interface{}{}, nil, nil, nil, nil, nil)
+	job, err := store.CreateJob(ctx, "project-123", models.StatusPendingPlan, "plan", "test-module", map[string]interface{}{}, nil, nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	// Create temporary workdir with a Terraform file that takes a few seconds to plan
@@ -174,7 +174,7 @@ func TestWorker_MidFlightCancellation_Apply(t *testing.T) {
 
 	store := db.NewStore(pool)
 
-	job, err := store.CreateJob(ctx, "project-123", "apply", "test-module", map[string]interface{}{}, nil, nil, nil, nil, nil)
+	job2, err := store.CreateJob(ctx, "project-123", models.StatusPendingPlan, "apply", "test-module", map[string]interface{}{}, nil, nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	// Create temporary workdir with a Terraform file that takes a few seconds to apply
@@ -204,19 +204,19 @@ resource "time_sleep" "wait" {
 
 	go func() {
 		defer wg.Done()
-		err := wp.handleApply(ctx, job, runner, workDir, io.Discard, logger)
+		err := wp.handleApply(ctx, job2, runner, workDir, io.Discard, logger)
 		assert.NoError(t, err)
 	}()
 
 	// Wait 1 second to ensure apply is running, then cancel job in DB
 	time.Sleep(1 * time.Second)
-	err = store.UpdateJobStatus(ctx, job.ID, models.StatusCancelled)
+	err = store.UpdateJobStatus(ctx, job2.ID, models.StatusCancelled)
 	require.NoError(t, err)
 
 	wg.Wait()
 
 	// Verify that the job status was not updated to APPLIED
-	finalJob, err := store.GetJob(ctx, job.ID)
+	finalJob, err := store.GetJob(ctx, job2.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.StatusCancelled, finalJob.Status)
 }

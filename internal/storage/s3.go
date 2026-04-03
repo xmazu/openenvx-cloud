@@ -18,6 +18,14 @@ type ObjectInfo struct {
 	ContentType  string
 }
 
+type ObjectStorage interface {
+	EnsureBucket(ctx context.Context) error
+	Upload(ctx context.Context, objectName string, reader io.Reader, size int64, contentType string) (string, error)
+	GetPresignedURL(ctx context.Context, objectName string, expiry time.Duration) (string, error)
+	Download(ctx context.Context, objectName string) (io.ReadCloser, error)
+	Stat(ctx context.Context, objectName string) (ObjectInfo, error)
+}
+
 type Storage struct {
 	client *s3.Client
 	bucket string

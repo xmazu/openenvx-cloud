@@ -96,7 +96,7 @@ func TestCreateJob_Concurrent(t *testing.T) {
 	for i := 0; i < numWorkers; i++ {
 		go func() {
 			defer wg.Done()
-			_, err := store.CreateJob(ctx, projectID, operation, moduleName, variables, hooks, hooks, hooks, hooks, hooks)
+			_, err := store.CreateJob(ctx, projectID, models.StatusPendingPlan, operation, moduleName, variables, hooks, hooks, hooks, hooks, hooks)
 			results <- err
 		}()
 	}

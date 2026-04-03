@@ -111,7 +111,7 @@ func TestCreateJob_Conflict(t *testing.T) {
 
 	logger := zerolog.New(nil)
 	broker := pubsub.NewBroker()
-	s := NewServer(store, nil, &logger, broker)
+	s := NewServer(store, nil, logger, broker, "test-token")
 	handler := s.Routes()
 
 	projectID := "proj-1"
@@ -157,7 +157,7 @@ func TestDiscardJob(t *testing.T) {
 
 	logger := zerolog.New(nil)
 	broker := pubsub.NewBroker()
-	s := NewServer(store, nil, &logger, broker)
+	s := NewServer(store, nil, logger, broker, "test-token")
 	handler := s.Routes()
 
 	projectID := "proj-1"

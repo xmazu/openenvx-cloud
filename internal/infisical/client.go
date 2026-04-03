@@ -7,6 +7,10 @@ import (
 	infisical "github.com/infisical/go-sdk"
 )
 
+type SecretManager interface {
+	GetSecrets(ctx context.Context, projectID, environment, path string) (map[string]string, error)
+}
+
 type Client struct {
 	client infisical.InfisicalClientInterface
 }
@@ -32,7 +36,7 @@ func NewClient(cfg Config) (*Client, error) {
 	}, nil
 }
 
-func (c *Client) GetSecrets(projectID, environment, path string) (map[string]string, error) {
+func (c *Client) GetSecrets(ctx context.Context, projectID, environment, path string) (map[string]string, error) {
 	res, err := c.client.Secrets().ListSecrets(infisical.ListSecretsOptions{
 		ProjectID:   projectID,
 		Environment: environment,
